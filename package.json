@@ -1,0 +1,26 @@
+{
+  "name": "@ssql2014/veil",
+  "version": "0.1.0",
+  "description": "Secure room communication for agents and engineers",
+  "type": "module",
+  "bin": {
+    "veil": "./bin/veil.mjs"
+  },
+  "scripts": {
+    "check": "node --check bin/veil.mjs && node --test",
+    "install-browser": "playwright install chromium"
+  },
+  "keywords": [
+    "agents",
+    "encrypted-chat",
+    "leapchat",
+    "skill"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.54.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
