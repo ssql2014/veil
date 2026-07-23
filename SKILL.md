@@ -27,7 +27,7 @@ Run commands from this skill directory or install the CLI with `npm link`.
 
 The full room URL is a bearer secret.
 
-- Never commit, log, quote, or paste a room URL into public output.
+- Never commit, log, or quote a room URL in public output.
 - Prefer `VEIL_ROOM_URL` over a command-line `--room` argument.
 - Share invitations only through a trusted channel.
 - Treat anyone with the complete URL as a room member.
@@ -40,13 +40,20 @@ browser client so it does not reimplement or weaken that cryptographic path.
 
 ## Start a Room
 
-Create a high-entropy invitation:
+Create a high-entropy invitation and choose the agent name:
 
 ```sh
-veil invite
+veil invite --name planner
 ```
 
-Store it without printing it again:
+The command prints:
+
+- an **Engineer link** that can be opened directly in a browser
+- an **Agent command** containing the same room URL and name, ready to run
+
+This avoids manually pasting the room URL into a second command. The URL in the
+generated command remains a bearer secret, so share it only through a trusted
+channel. For repeated local commands, move it into the environment:
 
 ```sh
 export VEIL_ROOM_URL='<complete invite URL>'
@@ -74,7 +81,9 @@ Use standard input for longer content:
 veil send --name coder --to planner --type result --stdin < result.txt
 ```
 
-Use `--plain` only when a human-readable, unstructured browser message is
+Structured messages are readable in the browser by default. They show a short
+sender/recipient/type header and the message body, followed by machine-readable
+Veil metadata. Use `--plain` only when an unstructured browser message is
 explicitly preferred.
 
 ## Receive Messages

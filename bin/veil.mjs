@@ -12,7 +12,7 @@ function usage(exitCode = 0) {
   out.write(`Veil — secure room communication for agents and engineers
 
 Usage:
-  veil invite [--server URL] [--json]
+  veil invite [--server URL] [--name NAME] [--json]
   veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --stdin) [--plain]
   veil history --room URL --name NAME [--jsonl]
   veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS]
@@ -71,6 +71,10 @@ function agentName(options) {
   return value;
 }
 
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
+}
+
 async function readStdin() {
   let data = "";
   process.stdin.setEncoding("utf8");
@@ -90,17 +94,22 @@ function encodeEnvelope({ from, to = "*", type = "message", body }) {
   };
   return {
     envelope,
-    wire: PROTOCOL_PREFIX + Buffer.from(JSON.stringify(envelope)).toString("base64url")
+    wire: `[Veil ${envelope.type}] ${envelope.from} -> ${envelope.to}\n${envelope.body}\n\n${
+      PROTOCOL_PREFIX + Buffer.from(JSON.stringify(envelope)).toString("base64url")
+    }`
   };
 }
 
 function decodeEnvelope(text, visibleFrom) {
-  if (!text.startsWith(PROTOCOL_PREFIX)) {
+  const metadataLine = text
+    .split("\n")
+    .findLast((line) => line.startsWith(PROTOCOL_PREFIX));
+  if (!metadataLine) {
     return { protocol: "leapchat/plain", from: visibleFrom, body: text };
   }
   try {
     const decoded = JSON.parse(
-      Buffer.from(text.slice(PROTOCOL_PREFIX.length), "base64url").toString("utf8")
+      Buffer.from(metadataLine.slice(PROTOCOL_PREFIX.length), "base64url").toString("utf8")
     );
     return decoded.protocol === "veil/v1"
       ? decoded
@@ -145,7 +154,17 @@ async function invite(options) {
   }
   server.hash = randomBytes(32).toString("base64url");
   const result = { room_url: server.toString(), warning: "Treat this URL as a room password." };
-  process.stdout.write(options.json ? `${JSON.stringify(result)}\n` : `${result.room_url}\n`);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const name = agentName({ name: options.name || process.env.VEIL_AGENT_NAME || "agent" });
+  process.stdout.write(
+    `Engineer link (open in a browser):\n${result.room_url}\n\n` +
+      `Agent command (ready to run):\n` +
+      `veil listen --room ${shellQuote(result.room_url)} --name ${shellQuote(name)} --jsonl\n\n` +
+      `Treat this link as the room password.\n`
+  );
 }
 
 async function send(options) {
@@ -190,30 +209,36 @@ async function listen(options) {
   const { browser, page } = await openRoom(roomUrl(options), agentName(options), options.headed);
   const seen = new Set();
   const timeoutSeconds = Number(options.timeout || 0);
+  let stopped = false;
   let timer;
-  const stop = async () => {
-    clearTimeout(timer);
-    await browser.close();
-    process.exit(0);
+  const stop = () => {
+    stopped = true;
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   if (timeoutSeconds > 0) timer = setTimeout(stop, timeoutSeconds * 1000);
 
-  while (true) {
-    const messages = await scrapeMessages(page);
-    for (const { from, text } of messages) {
-      const message = decodeEnvelope(text, from);
-      const key = message.id || `${from}\u0000${text}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      process.stdout.write(
-        options.jsonl
-          ? `${JSON.stringify(message)}\n`
-          : `[${message.from || from} -> ${message.to || "*"}] ${message.body}\n`
-      );
+  try {
+    while (!stopped) {
+      const messages = await scrapeMessages(page);
+      for (const { from, text } of messages) {
+        const message = decodeEnvelope(text, from);
+        const key = message.id || `${from}\u0000${text}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        process.stdout.write(
+          options.jsonl
+            ? `${JSON.stringify(message)}\n`
+            : `[${message.from || from} -> ${message.to || "*"}] ${message.body}\n`
+        );
+      }
+      await page.waitForTimeout(500);
     }
-    await page.waitForTimeout(500);
+  } finally {
+    clearTimeout(timer);
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    await browser.close();
   }
 }
 

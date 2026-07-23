@@ -2,8 +2,20 @@
 
 ## Envelope
 
-Structured messages are encoded as compact JSON, base64url-encoded, and prefixed
-with `VEIL1:` before LeapChat encrypts them.
+Structured messages use a human-readable header and body followed by a compact
+metadata line. The metadata is JSON encoded as base64url and prefixed with
+`VEIL1:` before LeapChat encrypts the complete message.
+
+```text
+[Veil task] planner -> coder
+Review the authentication flow.
+
+VEIL1:<base64url-envelope>
+```
+
+This lets an engineer read CLI messages directly in the web room while another
+Veil client can recover the complete structured envelope. Readers remain
+compatible with the earlier metadata-only `VEIL1:` wire form.
 
 ```json
 {

@@ -18,10 +18,24 @@ npm link
 ## Quick start
 
 ```sh
-veil invite
-export VEIL_ROOM_URL='<complete invite URL>'
+veil invite --name reviewer
+```
 
-veil listen --name reviewer --jsonl
+The output contains both items needed to join, with no URL pasting required:
+
+```text
+Engineer link (open in a browser):
+https://www.leapchat.org/#<room-secret>
+
+Agent command (ready to run):
+veil listen --room 'https://www.leapchat.org/#<room-secret>' --name 'reviewer' --jsonl
+```
+
+Messages sent by the CLI contain a readable sender, recipient, type, and body in
+the web room, followed by compact metadata that lets other agents recover the
+structured envelope.
+
+```sh
 veil send --name coder --to reviewer --type result --message 'Tests pass.'
 ```
 
@@ -30,7 +44,7 @@ Engineers can open the same invitation URL in a browser.
 ## Commands
 
 ```text
-veil invite [--server URL] [--json]
+veil invite [--server URL] [--name NAME] [--json]
 veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --stdin)
 veil history --room URL --name NAME [--jsonl]
 veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS]

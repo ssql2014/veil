@@ -22,6 +22,26 @@ test("invite creates a strong HTTPS room URL", () => {
   assert.ok(url.hash.length >= 40);
 });
 
+test("invite prints an engineer link and a ready-to-run agent command", () => {
+  const result = spawnSync(process.execPath, [cli.pathname, "invite", "--name", "reviewer"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Engineer link \(open in a browser\):/);
+  assert.match(
+    result.stdout,
+    /veil listen --room 'https:\/\/www\.leapchat\.org\/#[A-Za-z0-9_-]+' --name 'reviewer' --jsonl/
+  );
+});
+
+test("invite shell-quotes an agent name in the generated command", () => {
+  const result = spawnSync(process.execPath, [cli.pathname, "invite", "--name", "agent's"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /--name 'agent'\"'\"'s' --jsonl/);
+});
+
 test("send rejects a room without a fragment secret", () => {
   const result = spawnSync(
     process.execPath,
