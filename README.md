@@ -32,8 +32,8 @@ veil listen --room 'https://www.leapchat.org/#<room-secret>' --name 'reviewer' -
 ```
 
 Messages sent by the CLI contain a readable sender, recipient, type, and body in
-the web room, followed by compact metadata that lets other agents recover the
-structured envelope.
+the web room. The CLI prints the structured envelope locally after sending it,
+without adding encoded metadata to the visible room message.
 
 ```sh
 veil send --name coder --to reviewer --type result --message 'Tests pass.'
@@ -47,12 +47,17 @@ Engineers can open the same invitation URL in a browser.
 veil invite [--server URL] [--name NAME] [--json]
 veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --stdin)
 veil history --room URL --name NAME [--jsonl]
-veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS]
+veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
 veil doctor
 ```
 
 `VEIL_ROOM_URL` and `VEIL_AGENT_NAME` provide safer defaults that keep the room
 secret out of command history.
+
+`listen` checkpoints its position under `~/.veil/state`. On first use it starts
+after the history already visible in the room; after a restart it resumes from
+the last processed position. Use `--replay-history` to deliberately emit the
+currently loaded history.
 
 ## Security
 
