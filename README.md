@@ -44,10 +44,13 @@ Engineers can open the same invitation URL in a browser.
 ## Commands
 
 ```text
-veil invite [--server URL] [--name NAME] [--json]
+veil invite [--server URL] [--name NAME] [--pane TARGET] [--json]
 veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --stdin)
 veil history --room URL --name NAME [--jsonl]
 veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
+veil start --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
+veil join --room URL --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
+veil sidecar --room URL --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
 veil doctor
 ```
 
@@ -58,6 +61,33 @@ secret out of command history.
 after the history already visible in the room; after a restart it resumes from
 the last processed position. Use `--replay-history` to deliberately emit the
 currently loaded history.
+
+## Tmux sidecar
+
+Bind a new encrypted room to an existing Codex, Claude, Gemini, or Aider pane:
+
+```sh
+veil start --name codex-reviewer --pane %6
+```
+
+`start` prints the Engineer link and then runs the sidecar in the foreground.
+`veil invite --name codex-reviewer --pane %6` provides the same automatic
+binding while preserving the familiar room-creation command.
+Opening an existing room uses the same bridge automatically:
+
+```sh
+veil join --room "$VEIL_ROOM_URL" --name codex-reviewer --pane %6
+```
+
+`veil listen ... --pane %6` is also accepted and switches `listen` into sidecar
+mode. The sidecar serializes incoming messages, injects each request into the
+bound tmux pane, waits for the agent to finish, and posts the extracted reply to
+the room. Stop it with Ctrl-C.
+
+Anyone holding the room URL can submit work to the bound pane. Use a dedicated
+agent pane, keep permission prompts enabled for consequential actions, and do
+not bind a room shared with untrusted participants. If process auto-detection
+is wrong, set `--agent-type codex|claude|gemini|aider` explicitly.
 
 ## Security
 

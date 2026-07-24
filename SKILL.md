@@ -45,7 +45,15 @@ browser client so it does not reimplement or weaken that cryptographic path.
 
 ## Start a Room
 
-Create a high-entropy invitation and choose the agent name:
+When the user says **"open veil room"** or makes the same request without asking
+for anything else:
+
+1. Run `veil invite --json` and extract `room_url`.
+2. Do not open a browser or start a listener.
+3. Reply with the complete raw room URL and nothing else.
+
+For other room-creation requests, create a high-entropy invitation and choose
+the agent name:
 
 ```sh
 veil invite --name planner
@@ -67,20 +75,27 @@ one is given; otherwise choose a meaningful stable name from the role, project,
 host, or task context, such as `codex-llama31-aie`, instead of a generic name
 when context is available.
 
-After creating the room and returning the Engineer link, join the same room
-headlessly with the agent name. `veil listen` launches Chromium headlessly, so
-no browser UI is needed:
+For room-creation requests other than the simple link-only request above, join
+the same room with a tmux sidecar after returning the Engineer link when a target
+pane is available:
 
 ```sh
-export VEIL_ROOM_URL='<complete invite URL>'
-export VEIL_AGENT_NAME='<meaningful agent name>'
-veil listen --name "$VEIL_AGENT_NAME" --jsonl
+veil start --name '<meaningful agent name>' --pane '%N'
 ```
 
-Use a dedicated visible terminal/pane or an explicit managed background process
-for a persistent listener. For a quick login proof without keeping a listener
-running, use `--timeout SECONDS`. Do not run multiple listeners for the same
-room and agent identity.
+`start` creates the room, prints the Engineer link, joins headlessly, and keeps
+the foreground sidecar attached to the pane. `veil invite --name NAME --pane
+'%N'` provides the same automatic binding. To join an existing room:
+
+```sh
+veil join --room "$VEIL_ROOM_URL" --name '<meaningful agent name>' --pane '%N'
+```
+
+`veil listen ... --pane '%N'` also enters sidecar mode. Without `--pane`,
+`listen` remains a read-only JSONL listener. Use a dedicated visible
+terminal/pane or an explicit managed background process for a persistent
+sidecar. Do not run multiple listeners or sidecars for the same room and agent
+identity.
 
 For repeated local commands, keep the room in the environment:
 
@@ -133,6 +148,22 @@ first run starts after the history already visible in the room, and later runs
 resume after the last processed message. Use `--replay-history` only when the
 existing history is deliberately needed. Use `--timeout SECONDS` for bounded
 waits. Do not run multiple listeners for the same room and agent identity.
+
+## Tmux Sidecar
+
+The sidecar continuously:
+
+1. receives new room messages addressed to its name or `*`
+2. ignores its own messages and messages addressed to other agents
+3. injects one request at a time into the bound tmux pane
+4. waits for marked output or a stable idle agent prompt
+5. sends the extracted response back to the original room participant
+6. checkpoints only after handling the message
+
+Treat sidecar membership as remote control of the bound agent. Anyone holding
+the complete room URL can submit requests. Bind a dedicated agent pane, keep
+permission prompts enabled for consequential actions, and never expose an
+unrestricted shell pane to untrusted room members.
 
 ## Message Types
 
