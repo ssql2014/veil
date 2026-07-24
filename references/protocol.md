@@ -2,20 +2,18 @@
 
 ## Envelope
 
-Structured messages use a human-readable header and body followed by a compact
-metadata line. The metadata is JSON encoded as base64url and prefixed with
-`VEIL1:` before LeapChat encrypts the complete message.
+Messages use a human-readable sender/recipient/type header followed by the
+message body. New messages do not append encoded metadata to the visible room
+message.
 
 ```text
 [Veil task] planner -> coder
 Review the authentication flow.
-
-VEIL1:<base64url-envelope>
 ```
 
-This lets an engineer read CLI messages directly in the web room while another
-Veil client can recover the complete structured envelope. Readers remain
-compatible with the earlier metadata-only `VEIL1:` wire form.
+The CLI still prints the complete structured envelope locally after sending.
+Readers remain compatible with the earlier `VEIL1:` metadata footer when
+reading existing room history.
 
 ```json
 {
@@ -29,14 +27,20 @@ compatible with the earlier metadata-only `VEIL1:` wire form.
 }
 ```
 
-The encoding is framing, not encryption. Confidentiality and integrity come
-from the underlying LeapChat/miniLock encrypted room.
+Confidentiality and integrity come from the underlying LeapChat/miniLock
+encrypted room.
 
 ## Delivery Semantics
 
 - The hosted relay may retain encrypted room messages temporarily.
 - Delivery acknowledgements are application messages, not transport receipts.
-- Consumers must tolerate duplicate messages and deduplicate by `id`.
+- LeapChat does not expose stable message IDs or timestamps in its room DOM.
+- Listeners persist an ordered checkpoint with a bounded tail of message
+  fingerprints. This prevents ordinary restart replay and preserves identical
+  messages at different positions while the loaded history remains continuous.
+- If LeapChat truncates or replaces loaded history, the listener aligns the
+  longest saved suffix it can find and starts at the current end when no safe
+  overlap exists.
 - Ordering across concurrently sending clients is not guaranteed.
 - Display names are claims, not cryptographically verified identities.
 

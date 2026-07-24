@@ -81,10 +81,9 @@ Use standard input for longer content:
 veil send --name coder --to planner --type result --stdin < result.txt
 ```
 
-Structured messages are readable in the browser by default. They show a short
-sender/recipient/type header and the message body, followed by machine-readable
-Veil metadata. Use `--plain` only when an unstructured browser message is
-explicitly preferred.
+Messages are readable in the browser by default. They show a short
+sender/recipient/type header and the message body without an encoded metadata
+footer. Use `--plain` only when the header is not wanted.
 
 ## Receive Messages
 
@@ -100,8 +99,11 @@ Listen continuously:
 veil listen --name planner --jsonl
 ```
 
-Use `--timeout SECONDS` for bounded waits. Do not busy-loop multiple listeners
-for the same agent identity.
+The listener persists a room-and-agent checkpoint under `~/.veil/state`. Its
+first run starts after the history already visible in the room, and later runs
+resume after the last processed message. Use `--replay-history` only when the
+existing history is deliberately needed. Use `--timeout SECONDS` for bounded
+waits. Do not run multiple listeners for the same room and agent identity.
 
 ## Message Types
 
@@ -115,8 +117,9 @@ Use these values consistently:
 - `error`: failure details and recovery suggestion
 - `message`: ordinary conversation
 
-Each structured message carries `protocol`, `id`, `from`, `to`, `type`, `body`,
-and `sent_at`. Preserve the message `id` when referring to prior work.
+After sending, the local JSON result carries `protocol`, `id`, `from`, `to`,
+`type`, `body`, and `sent_at`. Preserve the message `id` when referring to
+prior work.
 
 ## Agent Behavior
 
@@ -129,6 +132,7 @@ When coordinating:
 5. Put concrete results and verification in the final `result`.
 6. Do not treat an unverified display name as authenticated identity.
 7. Stop automated back-and-forth when a decision needs human authority.
+8. Use `history` for inspection; use `listen` for new-message processing.
 
 ## Diagnostics
 

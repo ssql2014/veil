@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright";
+import { createCheckpoint, resumeIndex } from "../lib/message-cursor.mjs";
 
 const DEFAULT_SERVER = "https://www.leapchat.org";
 const PROTOCOL_PREFIX = "VEIL1:";
@@ -15,7 +19,7 @@ Usage:
   veil invite [--server URL] [--name NAME] [--json]
   veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --stdin) [--plain]
   veil history --room URL --name NAME [--jsonl]
-  veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS]
+  veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
   veil doctor
 
 Environment:
@@ -37,7 +41,7 @@ function parseArgs(argv) {
       continue;
     }
     const key = value.slice(2);
-    if (["json", "jsonl", "stdin", "plain", "headed"].includes(key)) {
+    if (["json", "jsonl", "stdin", "plain", "headed", "replay-history"].includes(key)) {
       options[key] = true;
       continue;
     }
@@ -94,9 +98,7 @@ function encodeEnvelope({ from, to = "*", type = "message", body }) {
   };
   return {
     envelope,
-    wire: `[Veil ${envelope.type}] ${envelope.from} -> ${envelope.to}\n${envelope.body}\n\n${
-      PROTOCOL_PREFIX + Buffer.from(JSON.stringify(envelope)).toString("base64url")
-    }`
+    wire: `[Veil ${envelope.type}] ${envelope.from} -> ${envelope.to}\n${envelope.body}`
   };
 }
 
@@ -145,6 +147,45 @@ async function scrapeMessages(page) {
       text: node.querySelector("div")?.textContent?.trim() || ""
     }))
   );
+}
+
+async function waitForInitialMessages(page) {
+  const deadline = Date.now() + 3_000;
+  let latest = [];
+  let stableSamples = 0;
+  while (Date.now() < deadline) {
+    const messages = await scrapeMessages(page);
+    stableSamples = messages.length > 0 && messages.length === latest.length
+      ? stableSamples + 1
+      : 0;
+    latest = messages;
+    if (stableSamples >= 2) break;
+    await page.waitForTimeout(250);
+  }
+  return latest;
+}
+
+function statePath(url, name) {
+  const key = createHash("sha256").update(`${url}\0${name}`).digest("hex");
+  const stateDirectory =
+    process.env.VEIL_STATE_DIR || path.join(os.homedir(), ".veil", "state");
+  return path.join(stateDirectory, `${key}.json`);
+}
+
+async function readCheckpoint(file) {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT" || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+async function writeCheckpoint(file, checkpoint) {
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(checkpoint)}\n`, { mode: 0o600 });
+  await fs.rename(temporary, file);
 }
 
 async function invite(options) {
@@ -206,8 +247,17 @@ async function history(options) {
 }
 
 async function listen(options) {
-  const { browser, page } = await openRoom(roomUrl(options), agentName(options), options.headed);
-  const seen = new Set();
+  const url = roomUrl(options);
+  const name = agentName(options);
+  const { browser, page } = await openRoom(url, name, options.headed);
+  const checkpointFile = statePath(url, name);
+  let checkpoint = options["replay-history"] ? null : await readCheckpoint(checkpointFile);
+  const initialMessages = await waitForInitialMessages(page);
+  if (!options["replay-history"] && !checkpoint) {
+    checkpoint = createCheckpoint(initialMessages);
+    await writeCheckpoint(checkpointFile, checkpoint);
+  }
+  let initialized = false;
   const timeoutSeconds = Number(options.timeout || 0);
   let stopped = false;
   let timer;
@@ -221,16 +271,28 @@ async function listen(options) {
   try {
     while (!stopped) {
       const messages = await scrapeMessages(page);
-      for (const { from, text } of messages) {
+      if (messages.length === 0 && checkpoint?.count > 0) {
+        await page.waitForTimeout(500);
+        continue;
+      }
+      const start = initialized ? resumeIndex(messages, checkpoint) : options["replay-history"]
+        ? 0
+        : resumeIndex(messages, checkpoint);
+      initialized = true;
+      for (let index = start; index < messages.length; index += 1) {
+        const { from, text } = messages[index];
         const message = decodeEnvelope(text, from);
-        const key = message.id || `${from}\u0000${text}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
         process.stdout.write(
           options.jsonl
             ? `${JSON.stringify(message)}\n`
             : `[${message.from || from} -> ${message.to || "*"}] ${message.body}\n`
         );
+        checkpoint = createCheckpoint(messages, index + 1);
+        await writeCheckpoint(checkpointFile, checkpoint);
+      }
+      if (!checkpoint || checkpoint.count !== messages.length) {
+        checkpoint = createCheckpoint(messages);
+        await writeCheckpoint(checkpointFile, checkpoint);
       }
       await page.waitForTimeout(500);
     }
