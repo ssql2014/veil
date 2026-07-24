@@ -27,7 +27,12 @@ Run commands from this skill directory or install the CLI with `npm link`.
 
 The full room URL is a bearer secret.
 
-- Never commit, log, or quote a room URL in public output.
+- Never commit, log, or quote a room URL in public artifacts such as repos,
+  reports, logs, tickets, or shared status files.
+- When the user asks to create/open a room, print the Engineer link directly in
+  the current user session by default. Treat that session as the trusted
+  delivery channel unless the user asks to withhold the link or store it only in
+  a local file.
 - Prefer `VEIL_ROOM_URL` over a command-line `--room` argument.
 - Share invitations only through a trusted channel.
 - Treat anyone with the complete URL as a room member.
@@ -51,13 +56,37 @@ The command prints:
 - an **Engineer link** that can be opened directly in a browser
 - an **Agent command** containing the same room URL and name, ready to run
 
-This avoids manually pasting the room URL into a second command. The URL in the
-generated command remains a bearer secret, so share it only through a trusted
-channel. For repeated local commands, move it into the environment:
+Return the Engineer link directly to the user in the same session that requested
+the room. Do not replace the link with only a path to a saved file unless the
+user asked for file-only handling. The URL remains a bearer secret outside that
+session, so do not copy it into durable logs, reports, commits, or unrelated
+channels.
+
+Choose the agent name before creating the room. Use the user-provided name when
+one is given; otherwise choose a meaningful stable name from the role, project,
+host, or task context, such as `codex-llama31-aie`, instead of a generic name
+when context is available.
+
+After creating the room and returning the Engineer link, join the same room
+headlessly with the agent name. `veil listen` launches Chromium headlessly, so
+no browser UI is needed:
 
 ```sh
 export VEIL_ROOM_URL='<complete invite URL>'
-export VEIL_AGENT_NAME='planner'
+export VEIL_AGENT_NAME='<meaningful agent name>'
+veil listen --name "$VEIL_AGENT_NAME" --jsonl
+```
+
+Use a dedicated visible terminal/pane or an explicit managed background process
+for a persistent listener. For a quick login proof without keeping a listener
+running, use `--timeout SECONDS`. Do not run multiple listeners for the same
+room and agent identity.
+
+For repeated local commands, keep the room in the environment:
+
+```sh
+export VEIL_ROOM_URL='<complete invite URL>'
+export VEIL_AGENT_NAME='<meaningful agent name>'
 ```
 
 An engineer joins by opening the complete URL in a browser and choosing a name.
