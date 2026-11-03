@@ -5,10 +5,25 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { chromium } from "playwright";
 import { createCheckpoint, resumeIndex } from "../lib/message-cursor.mjs";
 import { decodeEnvelope, encodeEnvelope } from "../lib/message-format.mjs";
+import {
+  addSubscription,
+  createSubscription,
+  defaultDeliveredPath,
+  defaultSubscriptionsPath,
+  dispatchSubscriptions,
+  emptyStore,
+  loadSubscriptions,
+  removeSubscription,
+  saveSubscriptions
+} from "../lib/subscriptions.mjs";
 import { exchangeWithPane, resolvePane } from "../lib/tmux-bridge.mjs";
+
+async function getChromium() {
+  const { chromium } = await import("playwright");
+  return chromium;
+}
 
 const DEFAULT_SERVER = "https://www.leapchat.org";
 
@@ -21,15 +36,23 @@ Usage:
   veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --stdin) [--plain]
   veil history --room URL --name NAME [--jsonl]
   veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
+             [--subscribe] [--subscriptions-file PATH] [--dry-run-webhooks]
+  veil subscribe add --webhook-url URL [--name LABEL] [--to NAME] [--type TYPE]
+                     [--from NAME] [--body-includes TEXT] [--authorization TOKEN]
+                     [--subscriptions-file PATH]
+  veil subscribe list [--subscriptions-file PATH] [--json]
+  veil subscribe remove ID_OR_NAME [--subscriptions-file PATH]
   veil start --name NAME --pane TARGET [--server URL] [--agent-type TYPE] [--settle SECONDS] [--response-timeout SECONDS]
   veil join --room URL --name NAME --pane TARGET [--agent-type TYPE] [--settle SECONDS] [--response-timeout SECONDS]
   veil sidecar --room URL --name NAME --pane TARGET [--agent-type TYPE] [--settle SECONDS] [--response-timeout SECONDS]
   veil doctor
 
 Environment:
-  VEIL_ROOM_URL       Default room invite URL
-  VEIL_AGENT_NAME     Default sender/listener name
-  VEIL_SERVER         Default server (https://www.leapchat.org)
+  VEIL_ROOM_URL              Default room invite URL
+  VEIL_AGENT_NAME            Default sender/listener name
+  VEIL_SERVER                Default server (https://www.leapchat.org)
+  VEIL_SUBSCRIPTIONS_FILE    Subscription store (default ~/.veil/subscriptions.json)
+  VEIL_STATE_DIR             Checkpoint / delivered-state root (default ~/.veil/state)
 `);
   process.exit(exitCode);
 }
@@ -45,7 +68,17 @@ function parseArgs(argv) {
       continue;
     }
     const key = value.slice(2);
-    if (["json", "jsonl", "stdin", "plain", "headed", "replay-history", "verbose"].includes(key)) {
+    if ([
+      "json",
+      "jsonl",
+      "stdin",
+      "plain",
+      "headed",
+      "replay-history",
+      "verbose",
+      "subscribe",
+      "dry-run-webhooks"
+    ].includes(key)) {
       options[key] = true;
       continue;
     }
@@ -91,6 +124,7 @@ async function readStdin() {
 }
 
 async function openRoom(url, name, headed = false) {
+  const chromium = await getChromium();
   const browser = await chromium.launch({ headless: !headed });
   const page = await browser.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -156,6 +190,145 @@ async function writeCheckpoint(file, checkpoint) {
   await fs.writeFile(temporary, `${JSON.stringify(checkpoint)}\n`, { mode: 0o600 });
   await fs.rename(temporary, file);
 }
+
+function roomKey(url) {
+  return createHash("sha256").update(url).digest("hex").slice(0, 16);
+}
+
+function subscriptionsFile(options) {
+  return options["subscriptions-file"] || defaultSubscriptionsPath();
+}
+
+async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
+  if (!options.subscribe && !options["dry-run-webhooks"]) return;
+  const store = await loadSubscriptions(subscriptionsFile(options));
+  if (!store.subscriptions.length) return;
+  const deliveredFile = defaultDeliveredPath(roomKey(url));
+  const results = await dispatchSubscriptions({
+    store,
+    message,
+    listenerName,
+    roomKey: roomKey(url),
+    deliveredFile,
+    dryRun: Boolean(options["dry-run-webhooks"]),
+    log: (entry) => {
+      process.stderr.write(`veil: webhook dry-run ${JSON.stringify(entry)}\n`);
+    },
+    onError: (error, subscription) => {
+      process.stderr.write(
+        `veil: webhook failed for ${subscription.name || subscription.id}: ${error.message}\n`
+      );
+    }
+  });
+  for (const result of results) {
+    if (result.skipped) {
+      process.stderr.write(
+        `veil: webhook skipped (${result.skipped}) ${result.subscription_id}\n`
+      );
+      continue;
+    }
+    if (result.dry_run) {
+      process.stderr.write(`veil: webhook dry-run ok ${result.subscription_name || result.subscription_id}\n`);
+      continue;
+    }
+    if (result.ok) {
+      process.stderr.write(
+        `veil: webhook ${result.status} ${result.subscription_name || result.subscription_id}\n`
+      );
+    } else {
+      process.stderr.write(
+        `veil: webhook error ${result.subscription_name || result.subscription_id}: ${result.error || result.status}\n`
+      );
+    }
+  }
+}
+
+async function subscribeCommand(options, positional) {
+  const action = positional[0];
+  if (!action || ["help", "-h", "--help"].includes(action)) {
+    process.stdout.write(
+      "Usage:\n" +
+        "  veil subscribe add --webhook-url URL [--name LABEL] [--to NAME] [--type TYPE]\n" +
+        "                     [--from NAME] [--body-includes TEXT] [--authorization TOKEN]\n" +
+        "  veil subscribe list [--json]\n" +
+        "  veil subscribe remove ID_OR_NAME\n"
+    );
+    return;
+  }
+  const file = subscriptionsFile(options);
+  if (action === "add") {
+    if (!options["webhook-url"]) throw new Error("Webhook URL required: use --webhook-url");
+    const subscription = createSubscription({
+      name: options.name,
+      match: {
+        to: options.to,
+        type: options.type,
+        from: options.from,
+        body_includes: options["body-includes"]
+      },
+      webhook: {
+        url: options["webhook-url"],
+        authorization: options.authorization
+      }
+    });
+    const store = await loadSubscriptions(file);
+    const next = addSubscription(store, subscription);
+    await saveSubscriptions(next, file);
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, file, subscription: sanitizeSubscription(subscription) }, null, 2)}\n`
+    );
+    return;
+  }
+  if (action === "list") {
+    const store = await loadSubscriptions(file);
+    const subscriptions = store.subscriptions.map(sanitizeSubscription);
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify({ file, subscriptions }, null, 2)}\n`);
+    } else if (!subscriptions.length) {
+      process.stdout.write(`No subscriptions in ${file}\n`);
+    } else {
+      for (const entry of subscriptions) {
+        const match = entry.match || {};
+        const bits = [
+          entry.enabled === false ? "disabled" : "enabled",
+          match.to ? `to=${match.to}` : null,
+          match.type ? `type=${match.type}` : null,
+          match.from ? `from=${match.from}` : null,
+          match.body_includes ? `body~=${match.body_includes}` : null
+        ].filter(Boolean);
+        process.stdout.write(
+          `${entry.id}  ${entry.name}  ${bits.join(" ")}  url=${entry.webhook.url}\n`
+        );
+      }
+    }
+    return;
+  }
+  if (action === "remove") {
+    const idOrName = positional[1] || options.id || options.name;
+    if (!idOrName) throw new Error("Subscription id or name required");
+    const store = await loadSubscriptions(file);
+    const next = removeSubscription(store, idOrName);
+    await saveSubscriptions(next, file);
+    process.stdout.write(`${JSON.stringify({ ok: true, removed: idOrName, file }, null, 2)}\n`);
+    return;
+  }
+  throw new Error(`Unknown subscribe action: ${action}`);
+}
+
+function sanitizeSubscription(subscription) {
+  return {
+    id: subscription.id,
+    name: subscription.name,
+    match: subscription.match,
+    enabled: subscription.enabled,
+    created_at: subscription.created_at,
+    webhook: {
+      url: subscription.webhook.url,
+      authorization: subscription.webhook.authorization ? "[set]" : undefined
+    }
+  };
+}
+
 
 async function invite(options) {
   const server = new URL(options.server || process.env.VEIL_SERVER || DEFAULT_SERVER);
@@ -267,6 +440,7 @@ async function listen(options) {
             ? `${JSON.stringify(message)}\n`
             : `[${message.from || from} -> ${message.to || "*"}] ${message.body}\n`
         );
+        await maybeDispatchWebhooks(options, { message, listenerName: name, url });
         checkpoint = createCheckpoint(messages, index + 1);
         await writeCheckpoint(checkpointFile, checkpoint);
       }
@@ -416,6 +590,7 @@ async function doctor() {
     checks.server_reachable = response.ok;
   } catch {}
   try {
+    const chromium = await getChromium();
     const browser = await chromium.launch({ headless: true });
     checks.chromium = true;
     await browser.close();
@@ -425,12 +600,13 @@ async function doctor() {
 }
 
 async function main() {
-  const { command, options } = parseArgs(process.argv.slice(2));
+  const { command, options, positional } = parseArgs(process.argv.slice(2));
   if (!command || ["help", "-h", "--help"].includes(command)) usage();
   if (command === "invite") return invite(options);
   if (command === "send") return send(options);
   if (command === "history") return history(options);
   if (command === "listen") return listen(options);
+  if (command === "subscribe") return subscribeCommand(options, positional);
   if (command === "start") return start(options);
   if (command === "join" || command === "sidecar") return sidecar(options);
   if (command === "doctor") return doctor();

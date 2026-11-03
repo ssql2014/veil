@@ -48,6 +48,11 @@ veil invite [--server URL] [--name NAME] [--pane TARGET] [--json]
 veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --stdin)
 veil history --room URL --name NAME [--jsonl]
 veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
+             [--subscribe] [--subscriptions-file PATH] [--dry-run-webhooks]
+veil subscribe add --webhook-url URL [--name LABEL] [--to NAME] [--type TYPE]
+                   [--from NAME] [--body-includes TEXT] [--authorization TOKEN]
+veil subscribe list [--json]
+veil subscribe remove ID_OR_NAME
 veil start --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
 veil join --room URL --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
 veil sidecar --room URL --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
@@ -88,6 +93,29 @@ Anyone holding the room URL can submit work to the bound pane. Use a dedicated
 agent pane, keep permission prompts enabled for consequential actions, and do
 not bind a room shared with untrusted participants. If process auto-detection
 is wrong, set `--agent-type codex|claude|gemini|aider` explicitly.
+
+## Event subscriptions
+
+Wake another agent when a new room message matches a local rule. Rules and
+webhook secrets live in `~/.veil/subscriptions.json` (mode `0600`). Never commit
+that file or a room URL.
+
+```sh
+veil subscribe add \
+  --name wake-coder \
+  --to coder \
+  --type task \
+  --webhook-url 'https://api2.cursor.sh/automations/webhook/<id>' \
+  --authorization '<sender-key>'
+
+veil listen --name coder --jsonl --subscribe
+# Preview without POSTing:
+veil listen --name coder --jsonl --subscribe --dry-run-webhooks
+```
+
+Matching is edge-triggered on newly observed messages after the listen
+checkpoint. The webhook JSON includes `from`, `to`, `type`, `body`, `sent_at`,
+and `id` — never the room URL. See [references/protocol.md](references/protocol.md).
 
 ## Security
 

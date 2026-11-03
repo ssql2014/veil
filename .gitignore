@@ -4,3 +4,7 @@ playwright-report/
 test-results/
 *.log
 .DS_Store
+# Local subscription / webhook secrets (never commit)
+subscriptions.json
+*.env
+watch*.env

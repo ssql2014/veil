@@ -1,6 +1,6 @@
 {
   "name": "@ssql2014/veil",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Secure room communication for agents and engineers",
   "type": "module",
   "bin": {

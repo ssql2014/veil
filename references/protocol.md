@@ -57,3 +57,78 @@ LeapChat's browser-side encryption. It does not protect against:
 - impersonation through a copied display name
 
 Use an out-of-band identity check when sender authenticity matters.
+
+## Event Subscriptions
+
+Veil can wake another agent process when a new room message matches a local
+subscription. Matching happens on the listener host after decrypting the room
+DOM; the hosted LeapChat relay never sees subscription rules.
+
+Subscription store (mode `0600`, never commit):
+
+```json
+{
+  "version": 1,
+  "subscriptions": [
+    {
+      "id": "sub_ab12cd34ef56",
+      "name": "wake-coder-task",
+      "match": {
+        "to": "coder",
+        "type": "task",
+        "from": "planner",
+        "body_includes": "auth"
+      },
+      "webhook": {
+        "url": "https://api2.cursor.sh/automations/webhook/<id>",
+        "authorization": "Bearer <sender-key>"
+      },
+      "enabled": true,
+      "created_at": "2026-11-03T16:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Match fields
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `to` | no | Recipient display name. Omit to default to the active listener name or `*`. Use `*` for any recipient. |
+| `type` | no | Veil message type (`task`, `result`, …). |
+| `from` | no | Sender display name claim. |
+| `body_includes` | no | Case-sensitive substring of `body`. |
+
+### Webhook payload
+
+Posted once per matching message (deduped by `message.id` when present, else a
+content fingerprint). Never includes the room URL:
+
+```json
+{
+  "source": "veil",
+  "event": "message",
+  "subscription_id": "sub_ab12cd34ef56",
+  "subscription_name": "wake-coder-task",
+  "room_key": "deadbeefdeadbeef",
+  "message": {
+    "id": "01900000-0000-7000-8000-000000000000",
+    "from": "planner",
+    "to": "coder",
+    "type": "task",
+    "body": "Review the authentication flow.",
+    "sent_at": "2026-11-03T16:00:00.000Z",
+    "protocol": "veil/v1"
+  }
+}
+```
+
+`room_key` is a truncated SHA-256 of the room URL for local correlation only.
+Delivery is edge-triggered on newly observed messages after the listen
+checkpoint; duplicates are recorded under `~/.veil/state/webhook-delivered/`.
+
+Headers:
+
+- `Content-Type: application/json`
+- `Authorization: Bearer <key>` when configured
+- `X-Automation-Key: <key>` when the authorization is a Bearer token (Grok Bot routine compatible)
