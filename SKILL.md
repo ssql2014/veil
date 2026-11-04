@@ -216,10 +216,12 @@ Encode this full chain every time — do not skip to steady-state polling:
    invite URL).
 3. **Bootstrap:** polling `veil history` / MCP `get_recent_events` **is allowed
    only** to prove connectivity and to stand up the event channel.
-4. **Auto handoff:** when MCP `events/subscribe` or a signed classic webhook
-   verifies, link-state flips to `phase: events` and **`bootstrap_polling`
-   becomes false automatically**. Stop the poll loop — no human re-flip.
-   Steady state = **MCP Events / Standard Webhooks only**.
+4. **Auto handoff:** after the callback challenge, a real event delivery, and
+   authenticated `wake_ack` from every configured `required_peers`, link-state
+   flips to `phase: events` and **`bootstrap_polling` becomes false
+   automatically**. A classic webhook 2xx alone never completes this gate.
+   Stop the poll loop — no human re-flip. Steady state = **MCP Events /
+   Standard Webhooks only**.
 
 CoS inbound routine folder name: **`veil-dot`**. See
 [docs/EL-DOT.md](docs/EL-DOT.md) for bidirectional subscribe examples

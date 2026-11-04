@@ -20,10 +20,13 @@ import {
 } from "../lib/subscriptions.mjs";
 import {
   defaultMcpSubscriptionsPath,
+  defaultLinkStatePath,
   defaultRecentEventsPath,
   dispatchMcpEvents,
   loadMcpSubscriptions,
-  markEventChannelReady
+  pumpMcpOutbox,
+  recordEventDelivered,
+  stableEventId
 } from "../lib/mcp-events.mjs";
 import { startMcpServerFromCli } from "../lib/mcp-server.mjs";
 import { exchangeWithPane, resolvePane } from "../lib/tmux-bridge.mjs";
@@ -249,10 +252,11 @@ function logDispatchResults(kind, results) {
 }
 
 async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
-  if (!options.subscribe && !options["dry-run-webhooks"]) return;
+  if (!options.subscribe && !options["dry-run-webhooks"]) return true;
   const key = roomKey(url);
   const dryRun = Boolean(options["dry-run-webhooks"]);
   const deliveredFile = defaultDeliveredPath(key);
+  let deliveryOk = true;
 
   const store = await loadSubscriptions(subscriptionsFile(options));
   if (store.subscriptions.length) {
@@ -270,16 +274,23 @@ async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
         process.stderr.write(
           `veil: webhook failed for ${subscription.name || subscription.id}: ${error.message}\n`
         );
+      },
+      onDelivered: async ({ subscription, message }) => {
+        try {
+          await recordEventDelivered({
+            principal: listenerName,
+            event_id: stableEventId(message),
+            subscription_id: subscription.id,
+            channel: "classic",
+            file: options["link-state-file"] || defaultLinkStatePath()
+          });
+        } catch (error) {
+          process.stderr.write(`veil: link-state delivery record failed: ${error.message}\n`);
+        }
       }
     });
     logDispatchResults("webhook", results);
-    if (!dryRun && results.some((r) => r.ok)) {
-      await markEventChannelReady({
-        channel: "webhook",
-        room_key: key,
-        subscription_id: results.find((r) => r.ok)?.subscription_id
-      });
-    }
+    if (results.some((r) => r.ok === false || r.skipped === "backoff")) deliveryOk = false;
   }
 
   const mcpFile =
@@ -291,8 +302,10 @@ async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
       message,
       roomKey: key,
       deliveredFile,
+      subscriptionsFile: mcpFile,
       dryRun,
       recentFile: options["recent-events-file"] || defaultRecentEventsPath(),
+      linkStateFile: options["link-state-file"] || defaultLinkStatePath(),
       log: (entry) => {
         process.stderr.write(`veil: mcp dry-run ${JSON.stringify(entry)}\n`);
       },
@@ -303,7 +316,9 @@ async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
       }
     });
     logDispatchResults("mcp", results);
+    if (results.some((r) => r.ok === false || r.skipped === "backoff")) deliveryOk = false;
   }
+  return deliveryOk;
 }
 
 async function subscribeCommand(options, positional) {
@@ -483,6 +498,34 @@ async function listen(options) {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   if (timeoutSeconds > 0) timer = setTimeout(stop, timeoutSeconds * 1000);
+  const mcpFile = options["mcp-subscriptions-file"] || defaultMcpSubscriptionsPath();
+  const linkStateFile = options["link-state-file"] || defaultLinkStatePath();
+  const retryPumpEnabled = Boolean(options.subscribe || options["dry-run-webhooks"]);
+  let retryPumpBusy = false;
+  const retryPump = retryPumpEnabled
+    ? setInterval(async () => {
+        if (retryPumpBusy || stopped) return;
+        retryPumpBusy = true;
+        try {
+          await pumpMcpOutbox({
+            subscriptionsFile: mcpFile,
+            deliveredFile: defaultDeliveredPath(roomKey(url)),
+            linkStateFile,
+            dryRun: Boolean(options["dry-run-webhooks"]),
+            onError: (error, subscription) => {
+              process.stderr.write(
+                `veil: mcp retry failed for ${subscription.id}: ${error.message}\n`
+              );
+            }
+          });
+        } catch (error) {
+          process.stderr.write(`veil: mcp retry pump error: ${error.message}\n`);
+        } finally {
+          retryPumpBusy = false;
+        }
+      }, 500)
+    : null;
+  retryPump?.unref?.();
 
   try {
     while (!stopped) {
@@ -495,19 +538,25 @@ async function listen(options) {
         ? 0
         : resumeIndex(messages, checkpoint);
       initialized = true;
+      let allDelivered = true;
       for (let index = start; index < messages.length; index += 1) {
         const { from, text } = messages[index];
         const message = decodeEnvelope(text, from);
+        const delivered = await maybeDispatchWebhooks(options, { message, listenerName: name, url });
+        if (!delivered) {
+          allDelivered = false;
+          process.stderr.write(`veil: delivery pending; checkpoint held for message ${index + 1}\n`);
+          break;
+        }
         process.stdout.write(
           options.jsonl
             ? `${JSON.stringify(message)}\n`
             : `[${message.from || from} -> ${message.to || "*"}] ${message.body}\n`
         );
-        await maybeDispatchWebhooks(options, { message, listenerName: name, url });
         checkpoint = createCheckpoint(messages, index + 1);
         await writeCheckpoint(checkpointFile, checkpoint);
       }
-      if (!checkpoint || checkpoint.count !== messages.length) {
+      if (allDelivered && (!checkpoint || checkpoint.count !== messages.length)) {
         checkpoint = createCheckpoint(messages);
         await writeCheckpoint(checkpointFile, checkpoint);
       }
@@ -515,6 +564,7 @@ async function listen(options) {
     }
   } finally {
     clearTimeout(timer);
+    if (retryPump) clearInterval(retryPump);
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     await browser.close();

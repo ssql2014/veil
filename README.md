@@ -102,8 +102,9 @@ webhook / `whsec_` secrets live under `~/.veil/` (mode `0600`). Never commit
 those files or a room URL.
 
 **Landing for CoS ↔ Dot:** create/claim room → hand invite to Dot in-session →
-bootstrap poll only to stand up the event channel → **auto-switch** to MCP
-Events / Standard Webhooks and stop polling. CoS inbound routine folder:
+bootstrap poll only to stand up the event channel → after a real event delivery
+and every required-peer `wake_ack`, **auto-switch** to MCP Events / Standard
+Webhooks and stop polling. CoS inbound routine folder:
 `veil-dot`. Full checklist: [docs/EL-DOT.md](docs/EL-DOT.md).
 
 ```sh

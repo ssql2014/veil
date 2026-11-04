@@ -14,6 +14,9 @@ import {
   loadLinkState,
   loadMcpSubscriptions,
   markBootstrapPhase,
+  postSignedWebhook,
+  pumpMcpOutbox,
+  recordEventDelivered,
   recordWakeAck,
   stableEventId,
   subscribeMcpEvent,
@@ -56,6 +59,7 @@ test("isBlockedIp covers loopback private metadata and ULA", () => {
   assert.equal(isBlockedIp("169.254.169.254"), true);
   assert.equal(isBlockedIp("172.16.5.5"), true);
   assert.equal(isBlockedIp("::1"), true);
+  assert.equal(isBlockedIp("::ffff:7f00:1"), true);
   assert.equal(isBlockedIp("fc00::1"), true);
   assert.equal(isBlockedIp("fe80::1"), true);
   assert.equal(isBlockedIp("93.184.216.34"), false);
@@ -123,6 +127,45 @@ test("HTTP 401 without bearer when ACL configured", async () => {
   } finally {
     await mcp.close();
   }
+});
+
+test("protected HTTP methods fail closed when ACL and token are absent", async () => {
+  const dir = await tempDir();
+  const mcp = createMcpHttpServer({
+    host: "127.0.0.1",
+    port: 0,
+    context: { aclFile: path.join(dir, "missing-acl.json"), tokenEnv: "" }
+  });
+  const address = await mcp.listen();
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "events/list" })
+    });
+    assert.equal(response.status, 401);
+    assert.notEqual(response.status, 200);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("webhook POST uses the DNS-pinned address", async () => {
+  const secret = testWhsec();
+  let seenUrl;
+  await postSignedWebhook({
+    url: "https://example.com/callback",
+    secret,
+    subscriptionId: "sub_pin",
+    payload: { type: "event" },
+    msgId: "evt_pin",
+    lookup: publicLookup(),
+    fetchImpl: async (url) => {
+      seenUrl = url;
+      return { ok: true, status: 200, text: async () => "" };
+    }
+  });
+  assert.match(seenUrl, /^https:\/\/93\.184\.216\.34\//);
 });
 
 test("room ACL returns 403 and veil_send forces from", async () => {
@@ -257,16 +300,14 @@ test("outbox marks delivered only after 2xx; stable eventId; 410 terminates", as
   assert.equal((deliveredAfterFail.keys || []).length, 0);
 
   const store2 = await loadMcpSubscriptions(subsFile);
+  assert.equal(store2.subscriptions[0].delivery_state.pending[0].event.data.body, "ping");
   // clear backoff for immediate retry in test
   store2.subscriptions[0].delivery_state.next_attempt_at = null;
   await fs.writeFile(subsFile, JSON.stringify(store2));
 
-  const second = await dispatchMcpEvents({
-    store: store2,
-    message,
-    roomKey: room_key,
-    deliveredFile,
+  const second = await pumpMcpOutbox({
     subscriptionsFile: subsFile,
+    deliveredFile,
     fetchImpl,
     recentFile,
     lookup,
@@ -380,15 +421,68 @@ test("challenge does not stop poll; wake_ack gate upgrades", async () => {
   assert.equal(link.peers.dots.challenge_ok, true);
   assert.equal(link.peers.dots.wake_ack, undefined);
 
+  await assert.rejects(
+    () => recordWakeAck({
+      principal: "dots",
+      correlation_id: "triad-evt-test-20261104",
+      event_id: "evt_not_delivered",
+      file: linkStateFile,
+      required_peers: ["dots"]
+    }),
+    /real delivered event/
+  );
+
+  const deliveredFile = path.join(dir, "delivered.json");
+  const recentFile = path.join(dir, "recent.json");
+  await dispatchMcpEvents({
+    store: await loadMcpSubscriptions(subsFile),
+    message: { id: "real-wake", from: "cos", to: "dots", type: "task", body: "wake" },
+    roomKey: "aabbccddeeff0011",
+    deliveredFile,
+    subscriptionsFile: subsFile,
+    linkStateFile,
+    recentFile,
+    fetchImpl,
+    lookup: publicLookup()
+  });
+
   link = await recordWakeAck({
     principal: "dots",
     correlation_id: "triad-evt-test-20261104",
+    event_id: "evt_real-wake",
     file: linkStateFile,
     required_peers: ["dots"]
   });
   assert.equal(link.phase, "events");
   assert.equal(link.bootstrap_polling, false);
   assert.equal(link.peers.dots.wake_ack, true);
+});
+
+test("classic 2xx path needs required-peer ACK before cutover", async () => {
+  const dir = await tempDir();
+  const file = path.join(dir, "link.json");
+  await markBootstrapPhase({
+    room_key: "aabbccddeeff0011",
+    file,
+    required_peers: ["dots"],
+    wake_correlation_id: "corr"
+  });
+  let link = await recordEventDelivered({
+    principal: "dots",
+    event_id: "evt_classic",
+    channel: "classic",
+    file
+  });
+  assert.equal(link.phase, "bootstrap");
+  link = await recordWakeAck({
+    principal: "dots",
+    correlation_id: "corr",
+    event_id: "evt_classic",
+    file,
+    required_peers: ["dots"]
+  });
+  assert.equal(link.phase, "events");
+  assert.equal(link.event_channel, "webhook");
 });
 
 test("health endpoint stays unauthenticated and omits secrets", async () => {

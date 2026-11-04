@@ -10,6 +10,7 @@ import {
   deliveryFingerprint,
   dispatchSubscriptions,
   loadSubscriptions,
+  loadDelivered,
   messageMatches,
   matchingSubscriptions,
   postWebhook,
@@ -221,4 +222,30 @@ test("dispatchSubscriptions posts once and dedupes", async () => {
   assert.equal(second[0].skipped, "duplicate");
   assert.equal(posts[0].body.message.body, "wake");
   assert.equal(matchingSubscriptions(store, message, { listenerName: "coder" }).length, 1);
+});
+
+test("failed classic delivery stays pending and is not remembered", async () => {
+  const dir = await tempDir();
+  const deliveredFile = path.join(dir, "delivered.json");
+  const store = {
+    version: 1,
+    subscriptions: [
+      createSubscription({
+        id: "sub_fail",
+        name: "fail",
+        match: { to: "coder" },
+        webhook: { url: "https://example.com/fail" }
+      })
+    ]
+  };
+  const result = await dispatchSubscriptions({
+    store,
+    message: { id: "msg-fail", from: "planner", to: "coder", body: "wake" },
+    listenerName: "coder",
+    deliveredFile,
+    fetchImpl: async () => ({ ok: false, status: 503, text: async () => "down" })
+  });
+  assert.equal(result[0].ok, false);
+  const delivered = await loadDelivered(deliveredFile);
+  assert.deepEqual(delivered.keys, []);
 });

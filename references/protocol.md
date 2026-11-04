@@ -168,9 +168,10 @@ Persist under `~/.veil/` (mode `0600`): `mcp-subscriptions.json`,
 }
 ```
 
-After a verified `events/subscribe` (or a successful classic signed webhook
-dispatch), phase becomes `"events"`, `bootstrap_polling` becomes `false`, and
-callers must stop polling automatically.
+After the callback challenge, a real event delivery, and authenticated
+`wake_ack` from every configured `required_peers`, phase becomes `"events"`,
+`bootstrap_polling` becomes `false`, and callers must stop polling
+automatically. A classic signed webhook 2xx alone does not complete this gate.
 
 ### Standard Webhooks
 

@@ -15,11 +15,11 @@ rooms; operational focus is the CoS inbound routine folder **`veil-dot`**.
    invite URL; never put it in a webhook body).
 3. **Bootstrap:** a short poll of `veil history` / `get_recent_events` **is
    allowed only to prove connectivity** and to stand up the event channel.
-4. **Auto handoff:** after MCP subscribe challenge **and** required peers `wake_ack` (or classic
-   `veil subscribe` + signed webhook) verifies, link-state flips
-   `phase: bootstrap → events`, `bootstrap_polling: false`. **Stop polling
-   automatically** — no human re-flip. Steady state = MCP event / Standard
-   Webhooks only.
+4. **Auto handoff:** after MCP subscribe challenge, a real event delivery, and
+   required peers `wake_ack` (or classic `veil subscribe` + signed webhook),
+   link-state flips only after every required peer is acknowledged.
+   **Stop polling automatically** — no human re-flip. Steady state = MCP event
+   / Standard Webhooks only.
 
 Encoded chain: **bootstrap poll → event channel ready → auto stop poll**.
 
@@ -105,12 +105,15 @@ veil mcp-serve --host 127.0.0.1 --port 8787
 #     "required_peers": ["dots", "muse", "cos"]
 #   }
 # }
-# Steady-state cutover: authenticated veil/wake_ack with matching correlation_id
+# Steady-state cutover: authenticated veil/wake_ack with matching
+# correlation_id and the delivered event_id
 # from required peers — challenge alone does not stop bootstrap polling.
 
 # Dot calls events/subscribe for name=veil.message with delivery.mode=webhook,
 # delivery.url=$VEIL_MCP_CALLBACK_URL, delivery.secret=$VEIL_MCP_CALLBACK_SECRET
-# Successful subscribe auto-marks link-state phase=events (polling must stop).
+# Challenge success alone does not mark phase=events. After a real event is
+# delivered, every required peer must send authenticated wake_ack with the
+# matching correlation_id and event_id before polling stops.
 ```
 
 Dot → room tool: MCP `veil_send`. Data-gap tool: `get_recent_events` (bootstrap
@@ -150,8 +153,9 @@ Then exit the poll loop automatically.
 - [ ] `veil subscribe list` / MCP `events/list` shows the expected match.
 - [ ] `veil listen … --subscribe --dry-run-webhooks` logs a POST **without** a
       room URL / `#…` fragment.
-- [ ] After first verified delivery or `events/subscribe`, `~/.veil/link-state.json`
-      has `phase: "events"` and `bootstrap_polling: false`.
+- [ ] After a real delivery and every required-peer ACK,
+      `~/.veil/link-state.json` has `phase: "events"` and
+      `bootstrap_polling: false`.
 - [ ] Live listen / `veil mcp-serve` is supervised; not a cron poll.
 - [ ] Room URL only in `VEIL_ROOM_URL` or a local `0600` file outside the repo.
 - [ ] No ChatGPT shadow bot in the path.
