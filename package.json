@@ -1,13 +1,14 @@
 {
   "name": "@ssql2014/veil",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Secure room communication for agents and engineers",
   "type": "module",
   "bin": {
-    "veil": "./bin/veil.mjs"
+    "veil": "./bin/veil.mjs",
+    "veil-mcp": "./bin/veil-mcp.mjs"
   },
   "scripts": {
-    "check": "node --check bin/veil.mjs && node --test",
+    "check": "node --check bin/veil.mjs && node --check bin/veil-mcp.mjs && node --check lib/mcp-events.mjs && node --check lib/mcp-server.mjs && node --test",
     "install-browser": "playwright install chromium"
   },
   "keywords": [
@@ -18,7 +19,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "playwright": "^1.54.1"
+    "playwright": "^1.54.1",
+    "standardwebhooks": "^1.1.1"
   },
   "engines": {
     "node": ">=20"

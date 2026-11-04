@@ -18,6 +18,14 @@ import {
   removeSubscription,
   saveSubscriptions
 } from "../lib/subscriptions.mjs";
+import {
+  defaultMcpSubscriptionsPath,
+  defaultRecentEventsPath,
+  dispatchMcpEvents,
+  loadMcpSubscriptions,
+  markEventChannelReady
+} from "../lib/mcp-events.mjs";
+import { startMcpServerFromCli } from "../lib/mcp-server.mjs";
 import { exchangeWithPane, resolvePane } from "../lib/tmux-bridge.mjs";
 
 async function getChromium() {
@@ -46,6 +54,9 @@ Usage:
   veil join --room URL --name NAME --pane TARGET [--agent-type TYPE] [--settle SECONDS] [--response-timeout SECONDS]
   veil sidecar --room URL --name NAME --pane TARGET [--agent-type TYPE] [--settle SECONDS] [--response-timeout SECONDS]
   veil doctor
+  veil mcp-serve [--host HOST] [--port PORT] [--skip-challenge]
+                 [--mcp-subscriptions-file PATH] [--link-state-file PATH]
+                 [--recent-events-file PATH] [--principal NAME]
 
 Environment:
   VEIL_ROOM_URL              Default room invite URL
@@ -53,6 +64,11 @@ Environment:
   VEIL_SERVER                Default server (https://www.leapchat.org)
   VEIL_SUBSCRIPTIONS_FILE    Subscription store (default ~/.veil/subscriptions.json)
   VEIL_STATE_DIR             Checkpoint / delivered-state root (default ~/.veil/state)
+  VEIL_MCP_HOST / VEIL_MCP_PORT   MCP HTTP bind (default 127.0.0.1:8787)
+  VEIL_MCP_SUBSCRIPTIONS_FILE     MCP event subs (default ~/.veil/mcp-subscriptions.json)
+  VEIL_LINK_STATE_FILE            Bootstrap→events link state (~/.veil/link-state.json)
+  VEIL_DOT_WEBHOOK_URL / VEIL_DOT_WEBHOOK_SECRET   CoS veil-dot inbound (placeholders)
+  VEIL_COS_WEBHOOK_URL / VEIL_COS_WEBHOOK_SECRET   Reverse wake toward CoS/router
 `);
   process.exit(exitCode);
 }
@@ -77,7 +93,8 @@ function parseArgs(argv) {
       "replay-history",
       "verbose",
       "subscribe",
-      "dry-run-webhooks"
+      "dry-run-webhooks",
+      "skip-challenge"
     ].includes(key)) {
       options[key] = true;
       continue;
@@ -199,47 +216,87 @@ function subscriptionsFile(options) {
   return options["subscriptions-file"] || defaultSubscriptionsPath();
 }
 
-async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
-  if (!options.subscribe && !options["dry-run-webhooks"]) return;
-  const store = await loadSubscriptions(subscriptionsFile(options));
-  if (!store.subscriptions.length) return;
-  const deliveredFile = defaultDeliveredPath(roomKey(url));
-  const results = await dispatchSubscriptions({
-    store,
-    message,
-    listenerName,
-    roomKey: roomKey(url),
-    deliveredFile,
-    dryRun: Boolean(options["dry-run-webhooks"]),
-    log: (entry) => {
-      process.stderr.write(`veil: webhook dry-run ${JSON.stringify(entry)}\n`);
-    },
-    onError: (error, subscription) => {
-      process.stderr.write(
-        `veil: webhook failed for ${subscription.name || subscription.id}: ${error.message}\n`
-      );
-    }
-  });
+function logDispatchResults(kind, results) {
   for (const result of results) {
     if (result.skipped) {
       process.stderr.write(
-        `veil: webhook skipped (${result.skipped}) ${result.subscription_id}\n`
+        `veil: ${kind} skipped (${result.skipped}) ${result.subscription_id}\n`
       );
       continue;
     }
     if (result.dry_run) {
-      process.stderr.write(`veil: webhook dry-run ok ${result.subscription_name || result.subscription_id}\n`);
+      process.stderr.write(
+        `veil: ${kind} dry-run ok ${result.subscription_name || result.subscription_id}\n`
+      );
       continue;
     }
     if (result.ok) {
       process.stderr.write(
-        `veil: webhook ${result.status} ${result.subscription_name || result.subscription_id}\n`
+        `veil: ${kind} ${result.status} ${result.subscription_name || result.subscription_id}\n`
       );
     } else {
       process.stderr.write(
-        `veil: webhook error ${result.subscription_name || result.subscription_id}: ${result.error || result.status}\n`
+        `veil: ${kind} error ${result.subscription_name || result.subscription_id}: ${result.error || result.status}\n`
       );
     }
+  }
+}
+
+async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
+  if (!options.subscribe && !options["dry-run-webhooks"]) return;
+  const key = roomKey(url);
+  const dryRun = Boolean(options["dry-run-webhooks"]);
+  const deliveredFile = defaultDeliveredPath(key);
+
+  const store = await loadSubscriptions(subscriptionsFile(options));
+  if (store.subscriptions.length) {
+    const results = await dispatchSubscriptions({
+      store,
+      message,
+      listenerName,
+      roomKey: key,
+      deliveredFile,
+      dryRun,
+      log: (entry) => {
+        process.stderr.write(`veil: webhook dry-run ${JSON.stringify(entry)}\n`);
+      },
+      onError: (error, subscription) => {
+        process.stderr.write(
+          `veil: webhook failed for ${subscription.name || subscription.id}: ${error.message}\n`
+        );
+      }
+    });
+    logDispatchResults("webhook", results);
+    if (!dryRun && results.some((r) => r.ok)) {
+      await markEventChannelReady({
+        channel: "webhook",
+        room_key: key,
+        subscription_id: results.find((r) => r.ok)?.subscription_id
+      });
+    }
+  }
+
+  const mcpFile =
+    options["mcp-subscriptions-file"] || defaultMcpSubscriptionsPath();
+  const mcpStore = await loadMcpSubscriptions(mcpFile);
+  if (mcpStore.subscriptions.length) {
+    const results = await dispatchMcpEvents({
+      store: mcpStore,
+      message,
+      roomKey: key,
+      deliveredFile,
+      dryRun,
+      recentFile: options["recent-events-file"] || defaultRecentEventsPath(),
+      log: (entry) => {
+        process.stderr.write(`veil: mcp dry-run ${JSON.stringify(entry)}\n`);
+      },
+      onError: (error, subscription) => {
+        process.stderr.write(
+          `veil: mcp webhook failed for ${subscription.id}: ${error.message}\n`
+        );
+      }
+    });
+    logDispatchResults("mcp", results);
   }
 }
 
@@ -610,6 +667,9 @@ async function main() {
   if (command === "start") return start(options);
   if (command === "join" || command === "sidecar") return sidecar(options);
   if (command === "doctor") return doctor();
+  if (command === "mcp-serve" || command === "mcp") {
+    return startMcpServerFromCli(options);
+  }
   throw new Error(`Unknown command: ${command}`);
 }
 

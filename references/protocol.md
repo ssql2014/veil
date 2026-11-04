@@ -132,3 +132,61 @@ Headers:
 - `Content-Type: application/json`
 - `Authorization: Bearer <key>` when configured
 - `X-Automation-Key: <key>` when the authorization is a Bearer token (Grok Bot routine compatible)
+
+
+## MCP Events (`veil.message`)
+
+Veil also exposes an HTTP JSON-RPC MCP surface (`veil mcp-serve` / `veil-mcp`)
+for ChatGPT Dot and other MCP clients:
+
+| Method | Role |
+| --- | --- |
+| `events/list` | Advertise `veil.message` schema |
+| `events/subscribe` | Register webhook delivery (`delivery.mode=webhook`, `whsec_` secret); verifies callback with a signed challenge |
+| `events/unsubscribe` | Remove a grant (idempotent) |
+
+Tools:
+
+| Tool | Role |
+| --- | --- |
+| `veil_send` | Dot → room send via local `veil send` (needs `VEIL_ROOM_URL` on the server host) |
+| `get_recent_events` | Recent `veil.message` payloads for bootstrap / data-gap recovery — **not** steady-state wake |
+
+Persist under `~/.veil/` (mode `0600`): `mcp-subscriptions.json`,
+`link-state.json`, `state/recent-events.json`.
+
+### Bootstrap → events link-state
+
+```json
+{
+  "version": 1,
+  "phase": "bootstrap",
+  "room_key": "deadbeefdeadbeef",
+  "bootstrap_polling": true,
+  "event_channel": null,
+  "upgraded_at": null
+}
+```
+
+After a verified `events/subscribe` (or a successful classic signed webhook
+dispatch), phase becomes `"events"`, `bootstrap_polling` becomes `false`, and
+callers must stop polling automatically.
+
+### Standard Webhooks
+
+When a classic subscription or MCP delivery includes a `whsec_…` signing
+secret, outbound POSTs add:
+
+- `webhook-id`
+- `webhook-timestamp`
+- `webhook-signature`
+
+(per the Standard Webhooks spec). MCP subscribe also POSTs
+`{ "type": "verification", "challenge": "…" }` and requires the callback to echo
+`{ "challenge": "…" }`.
+
+### CoS routine folder
+
+Operational Dot ↔ router path uses CoS inbound routine folder name **`veil-dot`**.
+Display names in the room may still be `engineering-leader` / `el` / `dots`.
+Never put the room URL in event payloads.
