@@ -9,6 +9,9 @@ reimplementing the miniLock protocol.
 
 ## Install
 
+Requires Node.js 20.3+ and Python 3 with `fcntl` (macOS or Linux) for process-safe
+state locks. `python3` must be available on `PATH`.
+
 ```sh
 npm install
 npm run install-browser
@@ -49,7 +52,7 @@ veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --s
 veil history --room URL --name NAME [--jsonl]
 veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
              [--subscribe] [--subscriptions-file PATH] [--dry-run-webhooks]
-veil subscribe add --webhook-url URL [--name LABEL] [--to NAME] [--type TYPE]
+veil subscribe add --webhook-url URL [--name LABEL] [--principal RECEIVER] [--to NAME] [--type TYPE]
                    [--from NAME] [--body-includes TEXT] [--authorization TOKEN]
 veil subscribe list [--json]
 veil subscribe remove ID_OR_NAME
@@ -57,6 +60,7 @@ veil start --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECO
 veil join --room URL --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
 veil sidecar --room URL --name NAME --pane TARGET [--settle SECONDS] [--response-timeout SECONDS]
 veil doctor
+veil mcp-serve [--host HOST] [--port PORT] [--skip-challenge]
 ```
 
 `VEIL_ROOM_URL` and `VEIL_AGENT_NAME` provide safer defaults that keep the room
@@ -94,28 +98,43 @@ agent pane, keep permission prompts enabled for consequential actions, and do
 not bind a room shared with untrusted participants. If process auto-detection
 is wrong, set `--agent-type codex|claude|gemini|aider` explicitly.
 
-## Event subscriptions
+## Event subscriptions (webhook / MCP)
 
 Wake another agent when a new room message matches a local rule. Rules and
-webhook secrets live in `~/.veil/subscriptions.json` (mode `0600`). Never commit
-that file or a room URL.
+webhook / `whsec_` secrets live under `~/.veil/` (mode `0600`). Never commit
+those files or a room URL.
+
+**Landing for CoS ↔ Dot:** create/claim room → hand invite to Dot in-session →
+bootstrap poll only to stand up the event channel → after a real event delivery
+and every required-peer `wake_ack`, **auto-switch** to MCP Events / Standard
+Webhooks and stop polling. CoS inbound routine folder:
+`veil-dot`. Full checklist: [docs/EL-DOT.md](docs/EL-DOT.md).
 
 ```sh
 veil subscribe add \
-  --name wake-coder \
-  --to coder \
+  --name wake-veil-dot \
+  --principal cos \
+  --to engineering-leader \
   --type task \
-  --webhook-url 'https://api2.cursor.sh/automations/webhook/<id>' \
-  --authorization '<sender-key>'
+  --webhook-url "$VEIL_COS_WEBHOOK_URL" \
+  --authorization "$VEIL_COS_WEBHOOK_AUTH"
 
-veil listen --name coder --jsonl --subscribe
+veil listen --name dots --jsonl --subscribe
 # Preview without POSTing:
-veil listen --name coder --jsonl --subscribe --dry-run-webhooks
+veil listen --name dots --jsonl --subscribe --dry-run-webhooks
+
+# MCP Events (Standard Webhooks callbacks):
+veil mcp-serve --host 127.0.0.1 --port 8787
 ```
 
 Matching is edge-triggered on newly observed messages after the listen
-checkpoint. The webhook JSON includes `from`, `to`, `type`, `body`, `sent_at`,
-and `id` — never the room URL. See [references/protocol.md](references/protocol.md).
+checkpoint. Classic webhook JSON includes `from`, `to`, `type`, `body`,
+`sent_at`, and `id` — never the room URL. MCP delivers `veil.message` events
+signed with Standard Webhooks. See [references/protocol.md](references/protocol.md).
+
+For classic webhook ACKs, `--principal` identifies the receiving MCP principal
+from the ACL. Each required peer acknowledges its own callback's `eventId` and
+`wake` proof. Status and subscribe responses never contain that proof.
 
 ## Security
 

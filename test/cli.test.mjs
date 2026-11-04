@@ -63,6 +63,7 @@ test("help describes subscribe and webhook listen flags", () => {
   assert.match(result.stdout, /veil subscribe/);
   assert.match(result.stdout, /--subscribe/);
   assert.match(result.stdout, /--dry-run-webhooks/);
+  assert.match(result.stdout, /mcp-serve/);
 });
 
 test("subscribe add/list/remove round-trip without posting", () => {

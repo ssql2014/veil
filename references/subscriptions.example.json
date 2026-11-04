@@ -2,18 +2,34 @@
   "version": 1,
   "subscriptions": [
     {
-      "id": "sub_example0001",
-      "name": "wake-coder-task",
+      "id": "sub_example_veildot01",
+      "name": "wake-veil-dot",
       "match": {
-        "to": "coder",
+        "to": "engineering-leader",
         "type": "task"
       },
       "webhook": {
-        "url": "https://api2.cursor.sh/automations/webhook/<replace-me>",
-        "authorization": "Bearer <replace-me>"
+        "url": "https://api2.cursor.sh/automations/webhook/<replace-me-veil-dot>",
+        "authorization": "Bearer <replace-me-veil-dot>",
+        "signing_secret": "whsec_<replace-me-base64>"
       },
       "enabled": true,
-      "created_at": "2026-11-03T16:00:00.000Z"
+      "created_at": "2026-11-04T00:00:00.000Z"
+    },
+    {
+      "id": "sub_example_dots001",
+      "name": "wake-dots",
+      "match": {
+        "to": "dots",
+        "type": "task"
+      },
+      "webhook": {
+        "url": "https://api2.cursor.sh/automations/webhook/<replace-me-dots>",
+        "authorization": "Bearer <replace-me-dots>",
+        "signing_secret": "whsec_<replace-me-base64>"
+      },
+      "enabled": true,
+      "created_at": "2026-11-04T00:00:00.000Z"
     }
   ]
 }
