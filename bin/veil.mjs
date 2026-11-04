@@ -24,7 +24,8 @@ import {
   defaultRecentEventsPath,
   dispatchMcpEvents,
   loadMcpSubscriptions,
-  pumpMcpOutbox,
+  startMcpOutboxPump,
+  createWakeProof,
   recordEventDelivered,
   stableEventId
 } from "../lib/mcp-events.mjs";
@@ -48,7 +49,7 @@ Usage:
   veil history --room URL --name NAME [--jsonl]
   veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
              [--subscribe] [--subscriptions-file PATH] [--dry-run-webhooks]
-  veil subscribe add --webhook-url URL [--name LABEL] [--to NAME] [--type TYPE]
+  veil subscribe add --webhook-url URL [--name LABEL] [--principal RECEIVER] [--to NAME] [--type TYPE]
                      [--from NAME] [--body-includes TEXT] [--authorization TOKEN]
                      [--subscriptions-file PATH]
   veil subscribe list [--subscriptions-file PATH] [--json]
@@ -275,10 +276,17 @@ async function maybeDispatchWebhooks(options, { message, listenerName, url }) {
           `veil: webhook failed for ${subscription.name || subscription.id}: ${error.message}\n`
         );
       },
-      onDelivered: async ({ subscription, message }) => {
+      onPrepare: async ({ subscription }) => createWakeProof({
+        principal: subscription.principal,
+        room_key: key,
+        file: options["link-state-file"] || defaultLinkStatePath()
+      }),
+      onDelivered: async ({ subscription, message, payload }) => {
         try {
           await recordEventDelivered({
-            principal: listenerName,
+            principal: subscription.principal,
+            room_key: key,
+            wake: payload.wake,
             event_id: stableEventId(message),
             subscription_id: subscription.id,
             channel: "classic",
@@ -326,7 +334,7 @@ async function subscribeCommand(options, positional) {
   if (!action || ["help", "-h", "--help"].includes(action)) {
     process.stdout.write(
       "Usage:\n" +
-        "  veil subscribe add --webhook-url URL [--name LABEL] [--to NAME] [--type TYPE]\n" +
+        "  veil subscribe add --webhook-url URL [--name LABEL] [--principal RECEIVER] [--to NAME] [--type TYPE]\n" +
         "                     [--from NAME] [--body-includes TEXT] [--authorization TOKEN]\n" +
         "  veil subscribe list [--json]\n" +
         "  veil subscribe remove ID_OR_NAME\n"
@@ -338,6 +346,7 @@ async function subscribeCommand(options, positional) {
     if (!options["webhook-url"]) throw new Error("Webhook URL required: use --webhook-url");
     const subscription = createSubscription({
       name: options.name,
+      principal: options.principal,
       match: {
         to: options.to,
         type: options.type,
@@ -500,32 +509,13 @@ async function listen(options) {
   if (timeoutSeconds > 0) timer = setTimeout(stop, timeoutSeconds * 1000);
   const mcpFile = options["mcp-subscriptions-file"] || defaultMcpSubscriptionsPath();
   const linkStateFile = options["link-state-file"] || defaultLinkStatePath();
-  const retryPumpEnabled = Boolean(options.subscribe || options["dry-run-webhooks"]);
-  let retryPumpBusy = false;
-  const retryPump = retryPumpEnabled
-    ? setInterval(async () => {
-        if (retryPumpBusy || stopped) return;
-        retryPumpBusy = true;
-        try {
-          await pumpMcpOutbox({
-            subscriptionsFile: mcpFile,
-            deliveredFile: defaultDeliveredPath(roomKey(url)),
-            linkStateFile,
-            dryRun: Boolean(options["dry-run-webhooks"]),
-            onError: (error, subscription) => {
-              process.stderr.write(
-                `veil: mcp retry failed for ${subscription.id}: ${error.message}\n`
-              );
-            }
-          });
-        } catch (error) {
-          process.stderr.write(`veil: mcp retry pump error: ${error.message}\n`);
-        } finally {
-          retryPumpBusy = false;
-        }
-      }, 500)
+  const retryPump = options.subscribe && !options["dry-run-webhooks"]
+    ? startMcpOutboxPump({
+        subscriptionsFile: mcpFile,
+        linkStateFile,
+        onPumpError: () => process.stderr.write("veil: mcp retry pump failed\n")
+      })
     : null;
-  retryPump?.unref?.();
 
   try {
     while (!stopped) {
@@ -564,7 +554,7 @@ async function listen(options) {
     }
   } finally {
     clearTimeout(timer);
-    if (retryPump) clearInterval(retryPump);
+    await retryPump?.stop();
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     await browser.close();

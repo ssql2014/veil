@@ -9,6 +9,9 @@ reimplementing the miniLock protocol.
 
 ## Install
 
+Requires Node.js 20.3+ and Python 3 with `fcntl` (macOS or Linux) for process-safe
+state locks. `python3` must be available on `PATH`.
+
 ```sh
 npm install
 npm run install-browser
@@ -49,7 +52,7 @@ veil send --room URL --name NAME [--to NAME] [--type TYPE] (--message TEXT | --s
 veil history --room URL --name NAME [--jsonl]
 veil listen --room URL --name NAME [--jsonl] [--timeout SECONDS] [--replay-history]
              [--subscribe] [--subscriptions-file PATH] [--dry-run-webhooks]
-veil subscribe add --webhook-url URL [--name LABEL] [--to NAME] [--type TYPE]
+veil subscribe add --webhook-url URL [--name LABEL] [--principal RECEIVER] [--to NAME] [--type TYPE]
                    [--from NAME] [--body-includes TEXT] [--authorization TOKEN]
 veil subscribe list [--json]
 veil subscribe remove ID_OR_NAME
@@ -110,6 +113,7 @@ Webhooks and stop polling. CoS inbound routine folder:
 ```sh
 veil subscribe add \
   --name wake-veil-dot \
+  --principal cos \
   --to engineering-leader \
   --type task \
   --webhook-url "$VEIL_COS_WEBHOOK_URL" \
@@ -127,6 +131,10 @@ Matching is edge-triggered on newly observed messages after the listen
 checkpoint. Classic webhook JSON includes `from`, `to`, `type`, `body`,
 `sent_at`, and `id` — never the room URL. MCP delivers `veil.message` events
 signed with Standard Webhooks. See [references/protocol.md](references/protocol.md).
+
+For classic webhook ACKs, `--principal` identifies the receiving MCP principal
+from the ACL. Each required peer acknowledges its own callback's `eventId` and
+`wake` proof. Status and subscribe responses never contain that proof.
 
 ## Security
 

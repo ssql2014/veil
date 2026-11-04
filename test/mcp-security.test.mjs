@@ -17,6 +17,7 @@ import {
   postSignedWebhook,
   pumpMcpOutbox,
   recordEventDelivered,
+  createWakeProof,
   recordWakeAck,
   stableEventId,
   subscribeMcpEvent,
@@ -302,7 +303,7 @@ test("outbox marks delivered only after 2xx; stable eventId; 410 terminates", as
   const store2 = await loadMcpSubscriptions(subsFile);
   assert.equal(store2.subscriptions[0].delivery_state.pending[0].event.data.body, "ping");
   // clear backoff for immediate retry in test
-  store2.subscriptions[0].delivery_state.next_attempt_at = null;
+  store2.subscriptions[0].delivery_state.pending[0].next_attempt_at = null;
   await fs.writeFile(subsFile, JSON.stringify(store2));
 
   const second = await pumpMcpOutbox({
@@ -393,8 +394,10 @@ test("challenge does not stop poll; wake_ack gate upgrades", async () => {
     wake_correlation_id: "triad-evt-test-20261104"
   });
 
+  let proof;
   const fetchImpl = async (_url, init) => {
     const body = JSON.parse(init.body);
+    if (body.wake) proof = body.wake;
     const wh = new Webhook(secret);
     wh.verify(init.body, init.headers);
     return {
@@ -429,7 +432,7 @@ test("challenge does not stop poll; wake_ack gate upgrades", async () => {
       file: linkStateFile,
       required_peers: ["dots"]
     }),
-    /real delivered event/
+    /current self delivery proof/
   );
 
   const deliveredFile = path.join(dir, "delivered.json");
@@ -450,6 +453,7 @@ test("challenge does not stop poll; wake_ack gate upgrades", async () => {
     principal: "dots",
     correlation_id: "triad-evt-test-20261104",
     event_id: "evt_real-wake",
+    ...proof,
     file: linkStateFile,
     required_peers: ["dots"]
   });
@@ -467,16 +471,19 @@ test("classic 2xx path needs required-peer ACK before cutover", async () => {
     required_peers: ["dots"],
     wake_correlation_id: "corr"
   });
+  const proof = await createWakeProof({ principal: "dots", room_key: "aabbccddeeff0011", file });
   let link = await recordEventDelivered({
     principal: "dots",
     event_id: "evt_classic",
     channel: "classic",
+    room_key: proof.room_key,
+    wake: proof,
     file
   });
   assert.equal(link.phase, "bootstrap");
   link = await recordWakeAck({
     principal: "dots",
-    correlation_id: "corr",
+    ...proof,
     event_id: "evt_classic",
     file,
     required_peers: ["dots"]

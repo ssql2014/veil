@@ -13,6 +13,9 @@ import {
   loadLinkState,
   markBootstrapPhase,
   markEventChannelReady,
+  createWakeProof,
+  recordEventDelivered,
+  recordWakeAck,
   mcpMessageMatches,
   roomKeyFromUrl,
   signWebhookHeaders,
@@ -58,9 +61,14 @@ test("roomKeyFromUrl fingerprints without leaking URL", () => {
 test("bootstrap→events auto-upgrade clears polling", async () => {
   const dir = await tempDir();
   const file = path.join(dir, "link-state.json");
-  const boot = await markBootstrapPhase({ room_key: "abcdabcdabcdabcd", file });
+  const boot = await markBootstrapPhase({ room_key: "abcdabcdabcdabcd", file, required_peers: ["dots"] });
   assert.equal(boot.phase, "bootstrap");
   assert.equal(isBootstrapPollingAllowed(boot), true);
+  const premature = await markEventChannelReady({ file });
+  assert.equal(premature.phase, "bootstrap");
+  const proof = await createWakeProof({ principal: "dots", room_key: boot.room_key, file });
+  await recordEventDelivered({ principal: "dots", event_id: "evt_test", channel: "classic", room_key: boot.room_key, wake: proof, file });
+  await recordWakeAck({ principal: "dots", event_id: "evt_test", ...proof, file });
   const ready = await markEventChannelReady({
     channel: "mcp",
     room_key: "abcdabcdabcdabcd",

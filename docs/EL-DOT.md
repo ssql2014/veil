@@ -76,7 +76,7 @@ On the host that holds `VEIL_ROOM_URL` (often Dot / router):
 export VEIL_AGENT_NAME='dots'
 
 # Classic webhook wake into CoS routine folder veil-dot
-veil subscribe add   --name wake-veil-dot   --to engineering-leader   --type task   --webhook-url "$VEIL_COS_WEBHOOK_URL"   --authorization "$VEIL_COS_WEBHOOK_AUTH"
+veil subscribe add   --name wake-veil-dot   --principal cos   --to engineering-leader   --type task   --webhook-url "$VEIL_COS_WEBHOOK_URL"   --authorization "$VEIL_COS_WEBHOOK_AUTH"
 # If Standard Webhooks signing is configured, put whsec_ in the subscription
 # store signing_secret field (see references/protocol.md).
 
@@ -106,14 +106,15 @@ veil mcp-serve --host 127.0.0.1 --port 8787
 #   }
 # }
 # Steady-state cutover: authenticated veil/wake_ack with matching
-# correlation_id and the delivered event_id
+# room_key, probe_round, correlation_id, nonce from its own callback's wake
+# object and event_id equal to that callback's eventId
 # from required peers — challenge alone does not stop bootstrap polling.
 
 # Dot calls events/subscribe for name=veil.message with delivery.mode=webhook,
 # delivery.url=$VEIL_MCP_CALLBACK_URL, delivery.secret=$VEIL_MCP_CALLBACK_SECRET
 # Challenge success alone does not mark phase=events. After a real event is
 # delivered, every required peer must send authenticated wake_ack with the
-# matching correlation_id and event_id before polling stops.
+# matching callback wake proof and eventId before polling stops.
 ```
 
 Dot → room tool: MCP `veil_send`. Data-gap tool: `get_recent_events` (bootstrap
@@ -124,7 +125,7 @@ or recovery only — not steady-state wake).
 ```sh
 export VEIL_AGENT_NAME='engineering-leader'
 
-veil subscribe add   --name wake-dots   --to dots   --type task   --webhook-url "$VEIL_DOT_WEBHOOK_URL"   --authorization "$VEIL_DOT_WEBHOOK_AUTH"
+veil subscribe add   --name wake-dots   --principal dots   --to dots   --type task   --webhook-url "$VEIL_DOT_WEBHOOK_URL"   --authorization "$VEIL_DOT_WEBHOOK_AUTH"
 
 veil listen --name engineering-leader --jsonl --subscribe
 ```
@@ -143,7 +144,7 @@ veil invite --name engineering-leader
 ```
 
 During bootstrap only, either side may poll `veil history --jsonl` or MCP
-`get_recent_events` until a signed webhook / MCP subscribe round-trip succeeds.
+`get_recent_events` until real deliveries and all required-peer ACKs succeed.
 Then exit the poll loop automatically.
 
 ## Safety checklist
