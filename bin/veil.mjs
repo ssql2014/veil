@@ -57,6 +57,7 @@ Usage:
   veil mcp-serve [--host HOST] [--port PORT] [--skip-challenge]
                  [--mcp-subscriptions-file PATH] [--link-state-file PATH]
                  [--recent-events-file PATH] [--principal NAME]
+                 [--acl-file PATH]
 
 Environment:
   VEIL_ROOM_URL              Default room invite URL
@@ -67,6 +68,11 @@ Environment:
   VEIL_MCP_HOST / VEIL_MCP_PORT   MCP HTTP bind (default 127.0.0.1:8787)
   VEIL_MCP_SUBSCRIPTIONS_FILE     MCP event subs (default ~/.veil/mcp-subscriptions.json)
   VEIL_LINK_STATE_FILE            Bootstrap→events link state (~/.veil/link-state.json)
+  VEIL_MCP_ACL_FILE               MCP auth/ACL JSON (default ~/.veil/mcp-acl.json, mode 0600)
+  VEIL_MCP_TOKEN                  Optional single bearer token when ACL file absent
+  VEIL_WAKE_CORRELATION_ID        wake_ack correlation (default triad-evt-test-20261104)
+  VEIL_WAKE_REQUIRED_PEERS        comma list of principals required before events phase
+  VEIL_MCP_ALLOW_HTTP_LOCALHOST   set to 1 only for local test callbacks
   VEIL_DOT_WEBHOOK_URL / VEIL_DOT_WEBHOOK_SECRET   CoS veil-dot inbound (placeholders)
   VEIL_COS_WEBHOOK_URL / VEIL_COS_WEBHOOK_SECRET   Reverse wake toward CoS/router
 `);

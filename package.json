@@ -8,7 +8,7 @@
     "veil-mcp": "./bin/veil-mcp.mjs"
   },
   "scripts": {
-    "check": "node --check bin/veil.mjs && node --check bin/veil-mcp.mjs && node --check lib/mcp-events.mjs && node --check lib/mcp-server.mjs && node --test",
+    "check": "node --check bin/veil.mjs && node --check bin/veil-mcp.mjs && node --check lib/mcp-auth.mjs && node --check lib/mcp-events.mjs && node --check lib/mcp-server.mjs && node --test",
     "install-browser": "playwright install chromium"
   },
   "keywords": [

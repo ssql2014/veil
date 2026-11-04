@@ -152,7 +152,7 @@ test("classic subscribe validates signing_secret and signs POST", async () => {
   });
 });
 
-test("events/subscribe verifies challenge then upgrades link-state", async () => {
+test("events/subscribe verifies challenge without stopping bootstrap poll", async () => {
   const dir = await tempDir();
   const file = path.join(dir, "mcp-subs.json");
   const linkStateFile = path.join(dir, "link-state.json");
@@ -172,6 +172,7 @@ test("events/subscribe verifies challenge then upgrades link-state", async () =>
     };
   };
 
+  const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
   const grant = await subscribeMcpEvent({
     name: EVENT_NAME,
     arguments: { room_key, to: "engineering-leader", type: "task" },
@@ -182,13 +183,15 @@ test("events/subscribe verifies challenge then upgrades link-state", async () =>
     },
     file,
     linkStateFile,
-    fetchImpl
+    fetchImpl,
+    lookup
   });
   assert.match(grant.id, /^sub_/);
   const link = await loadLinkState(linkStateFile);
-  assert.equal(link.phase, "events");
-  assert.equal(link.bootstrap_polling, false);
-  assert.equal(link.event_channel, "mcp");
+  assert.equal(link.phase, "bootstrap");
+  assert.equal(link.bootstrap_polling, true);
+  assert.equal(link.peers.default.challenge_ok, true);
+  assert.notEqual(link.event_channel, "mcp");
 
   await unsubscribeMcpEvent({
     name: EVENT_NAME,

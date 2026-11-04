@@ -15,7 +15,7 @@ rooms; operational focus is the CoS inbound routine folder **`veil-dot`**.
    invite URL; never put it in a webhook body).
 3. **Bootstrap:** a short poll of `veil history` / `get_recent_events` **is
    allowed only to prove connectivity** and to stand up the event channel.
-4. **Auto handoff:** as soon as MCP `events/subscribe` (or classic
+4. **Auto handoff:** after MCP subscribe challenge **and** required peers `wake_ack` (or classic
    `veil subscribe` + signed webhook) verifies, link-state flips
    `phase: bootstrap → events`, `bootstrap_polling: false`. **Stop polling
    automatically** — no human re-flip. Steady state = MCP event / Standard
@@ -87,6 +87,27 @@ Or MCP Events (preferred when Dot speaks MCP):
 
 ```sh
 veil mcp-serve --host 127.0.0.1 --port 8787
+
+# Auth/ACL (placeholders only — never commit real tokens/rooms):
+# ~/.veil/mcp-acl.json mode 0600, or VEIL_MCP_ACL_FILE
+# {
+#   "tokens": {
+#     "tok_REPLACE_ME": {
+#       "principal": "dots",
+#       "agent": "dots",
+#       "rooms": ["ROOM_FINGERPRINT_HEX"],
+#       "tools": ["veil_send", "get_recent_events"],
+#       "events": ["veil.message"]
+#     }
+#   },
+#   "wake_ack": {
+#     "correlation_id": "triad-evt-test-20261104",
+#     "required_peers": ["dots", "muse", "cos"]
+#   }
+# }
+# Steady-state cutover: authenticated veil/wake_ack with matching correlation_id
+# from required peers — challenge alone does not stop bootstrap polling.
+
 # Dot calls events/subscribe for name=veil.message with delivery.mode=webhook,
 # delivery.url=$VEIL_MCP_CALLBACK_URL, delivery.secret=$VEIL_MCP_CALLBACK_SECRET
 # Successful subscribe auto-marks link-state phase=events (polling must stop).

@@ -30,12 +30,13 @@ if (options.help) {
   process.stdout.write(`Usage: veil-mcp [--host 127.0.0.1] [--port 8787]
                  [--mcp-subscriptions-file PATH] [--link-state-file PATH]
                  [--recent-events-file PATH] [--principal NAME]
-                 [--skip-challenge]
+                 [--acl-file PATH] [--skip-challenge]
 
 Environment:
   VEIL_ROOM_URL, VEIL_AGENT_NAME, VEIL_MCP_HOST, VEIL_MCP_PORT,
   VEIL_MCP_SUBSCRIPTIONS_FILE, VEIL_LINK_STATE_FILE, VEIL_RECENT_EVENTS_FILE,
-  VEIL_HOME
+  VEIL_MCP_ACL_FILE, VEIL_MCP_TOKEN, VEIL_WAKE_CORRELATION_ID,
+  VEIL_WAKE_REQUIRED_PEERS, VEIL_MCP_ALLOW_HTTP_LOCALHOST, VEIL_HOME
 `);
   process.exit(0);
 }
